@@ -14,4 +14,5 @@ html = html.split('__LOGO__').join(logo);
 for (const [k, v] of Object.entries(parts)) html = html.split(k).join(v);
 const out = path.join(__dirname, 'Tool tổng hợp CRM.html');
 fs.writeFileSync(out, html);
+fs.writeFileSync(path.join(__dirname, 'index.html'), html); // trang chủ GitHub Pages
 console.log('Đã tạo:', out, (html.length / 1024).toFixed(0) + ' KB');

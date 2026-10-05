@@ -2,6 +2,8 @@
 
 **`Tool tổng hợp CRM.html`** là một file HTML duy nhất, mở bằng trình duyệt (Chrome / Edge / Firefox), **chạy hoàn toàn offline**, không gửi dữ liệu đi đâu. Có thể gửi file cho người khác dùng.
 
+**Dùng online (GitHub Pages):** https://pm-ntshn.github.io/Tool_CRM_v2/ – dữ liệu vẫn chỉ xử lý trong trình duyệt, không tải lên máy chủ.
+
 ## Cách dùng
 1. Mở `Tool tổng hợp CRM.html`, kéo-thả (hoặc bấm chọn) file Excel export Deals từ CRM.
    - File raw: có sheet `1 - Bảng danh mục sản phẩm dự án` → tool tự convert sang template chuẩn (logic giống hệt `reference/convert_deals.py`).
