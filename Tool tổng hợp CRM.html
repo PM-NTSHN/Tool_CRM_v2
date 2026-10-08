@@ -1547,11 +1547,32 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
     deals.forEach(function (d) {
       d.vendorNames = d.vendors.map(function (x) { return x.v || NO_VENDOR; }).filter(function (v, i, a) { return a.indexOf(v) === i; });
       d.mainVendor = d.vendors[0].v || NO_VENDOR;
+      d.vendorValue = vendorValues(d);
       d.bucket = bucketOf(d.value);
       d.qualityLbl = d.issues.length ? QUALITY[0] : QUALITY[1];
       d.text = fold([d.id, d.name, d.customer, d.sale, d.reseller, d.vendorNames.join(' '), d.segment, d.stage, d.status, d.contract, d.bomText, d.failed].join(' | '));
     });
     return deals;
+  }
+  // Giá trị tính cho từng hãng của 1 thương vụ (phương án A):
+  //  - thương vụ 1 hãng: cả giá trị thương vụ;
+  //  - nhiều hãng: "Giá trị BOM theo hãng" của từng hãng (hãng không có giá BOM = 0);
+  //  - nhiều hãng nhưng BOM không có giá nào: cả giá trị thương vụ tính cho hãng chính.
+  function vendorValues(d) {
+    var m = new Map(), names = d.vendorNames;
+    if (names.length === 1) { m.set(names[0], d.value || 0); return m; }
+    var priced = false;
+    names.forEach(function (n) { m.set(n, 0); });
+    d.vendors.forEach(function (x) { if (x.bom) { priced = true; var k = x.v || NO_VENDOR; m.set(k, m.get(k) + x.bom); } });
+    if (!priced) m.set(d.mainVendor, d.value || 0);
+    return m;
+  }
+  function vendorSel() { var s = S.filters.vendor; return s && s.size ? s : null; }
+  // Giá trị dùng để cộng dồn: khi đang lọc theo hãng chỉ lấy phần giá trị của (các) hãng đã chọn
+  function val(d) {
+    var s = vendorSel(); if (!s) return d.value;
+    var t = 0; d.vendorNames.forEach(function (n) { if (s.has(n)) t += d.vendorValue.get(n) || 0; });
+    return t;
   }
   function derive() {
     var ref = S.ref, t1 = addMonths(ref, -1), t3 = addMonths(ref, -3), t6 = addMonths(ref, -6), t12 = addMonths(ref, -12);
@@ -1874,7 +1895,8 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
     if (S.filters.type && S.filters.type.size === 1 && S.filters.type.has('Cơ hội')) {
       var s = S.filters.type; delete S.filters.type; hiddenLead = filtered().filter(function (d) { return d.type === 'Lead chiến dịch'; }).length; S.filters.type = s;
     }
-    $('#resultLine').innerHTML = 'Đang hiển thị <strong>' + fmtN(v.length) + ' / ' + fmtN(total) + '</strong> thương vụ · tổng giá trị <strong>' + fmtShort(sum(v, function (d) { return d.value; })) + '</strong>' +
+    $('#resultLine').innerHTML = 'Đang hiển thị <strong>' + fmtN(v.length) + ' / ' + fmtN(total) + '</strong> thương vụ · tổng giá trị <strong>' + fmtShort(sum(v, val)) + '</strong>' +
+      (vendorSel() ? ' <span class="muted">(chỉ phần giá trị của hãng ' + esc(Array.from(vendorSel()).join(', ')) + ' – theo Giá trị BOM theo hãng; tổng giá trị cả thương vụ: ' + fmtShort(sum(v, function (d) { return d.value; })) + ')</span>' : '') +
       (activeCount() ? '' : ' · <span class="muted">chưa áp dụng bộ lọc nào</span>') +
       (hiddenLead ? ' · <span class="muted">đang ẩn ' + fmtN(hiddenLead) + ' Lead chiến dịch (chưa có thông tin cơ hội)</span> <button class="linkbtn" id="showLead">Hiện cả Lead</button>' : '');
     var sl = $('#showLead'); if (sl) sl.addEventListener('click', function () { delete S.filters.type; refresh(); });
@@ -1919,7 +1941,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
     duoCharts.forEach(function (c) { c.destroy(); }); duoCharts = [];
     var v = S.view, n = v.length;
     var stC = STATUSES.map(function (s) { return v.filter(function (d) { return d.status === s; }).length; });
-    var stV = STATUSES.map(function (s) { return sum(v.filter(function (d) { return d.status === s; }), function (d) { return d.value; }); });
+    var stV = STATUSES.map(function (s) { return sum(v.filter(function (d) { return d.status === s; }), val); });
     var stCols = [css('--s1'), css('--good'), css('--critical')];
     var act = v.filter(function (d) { return d.status === 'Active'; });
     var stg = STAGES.map(function (s) { return [s, act.filter(function (d) { return d.stage === s; }).length]; });
@@ -1948,7 +1970,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
   // ---------- KPI ----------
   function renderKpis() {
     var v = S.view, act = v.filter(function (d) { return d.status === 'Active'; }), won = v.filter(function (d) { return d.status === 'Won'; }), lost = v.filter(function (d) { return d.status === 'Lost'; });
-    var tot = sum(v, function (d) { return d.value; }), withVal = v.filter(function (d) { return d.value > 0; });
+    var tot = sum(v, val), withVal = v.filter(function (d) { return d.value > 0; });
     var rem = v.filter(function (d) { return d.remind; }), od = act.filter(function (d) { return d.overdue !== null; });
     var sales = new Set(v.map(function (d) { return d.sale; })), vend = new Set(), cust = new Set(v.map(function (d) { return d.customer; }));
     v.forEach(function (d) { d.vendorNames.forEach(function (x) { if (x !== NO_VENDOR) vend.add(x); }); });
@@ -1956,12 +1978,12 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
     var K = [
       { l: 'Tổng thương vụ', v: fmtN(v.length), s: fmtN(sales.size) + ' sale · ' + fmtN(vend.size) + ' hãng · ' + fmtN(cust.size) + ' KH', c: '--brand-600' },
       { l: 'Tổng giá trị', v: fmtShort(tot), s: 'TB ' + fmtShort(withVal.length ? tot / withVal.length : 0) + ' / thương vụ có giá trị', c: '--teal' },
-      { l: 'Pipeline Active', v: fmtShort(sum(act, function (d) { return d.value; })), s: fmtN(act.length) + ' thương vụ đang xử lý', c: '--s1', f: ['status', ['Active']] },
-      { l: 'Won', v: fmtShort(sum(won, function (d) { return d.value; })), s: fmtN(won.length) + ' thương vụ thắng', c: '--good', f: ['status', ['Won']] },
-      { l: 'Lost', v: fmtN(lost.length), s: fmtShort(sum(lost, function (d) { return d.value; })) + ' giá trị mất', c: '--critical', f: ['status', ['Lost']] },
+      { l: 'Pipeline Active', v: fmtShort(sum(act, val)), s: fmtN(act.length) + ' thương vụ đang xử lý', c: '--s1', f: ['status', ['Active']] },
+      { l: 'Won', v: fmtShort(sum(won, val)), s: fmtN(won.length) + ' thương vụ thắng', c: '--good', f: ['status', ['Won']] },
+      { l: 'Lost', v: fmtN(lost.length), s: fmtShort(sum(lost, val)) + ' giá trị mất', c: '--critical', f: ['status', ['Lost']] },
       { l: 'Tỷ lệ thắng', v: wr === null ? '–' : nf1.format(wr * 100) + '<small>%</small>', s: 'Won / (Won + Lost) theo số lượng', c: '--s3' },
       { l: 'Cần nhắc update', v: fmtN(rem.length), s: pct(rem.length, v.length) + ' · > 1 tháng không cập nhật', c: '--accent', f: ['flag', FLAGS.slice(1, 5)] },
-      { l: 'Đã qua timeline', v: fmtN(od.length), s: fmtShort(sum(od, function (d) { return d.value; })) + ' · Active quá Close date', c: '--severe', f: ['timeline', [TIMELINES[0]]] }
+      { l: 'Đã qua timeline', v: fmtN(od.length), s: fmtShort(sum(od, val)) + ' · Active quá Close date', c: '--severe', f: ['timeline', [TIMELINES[0]]] }
     ];
     $('#kpis').innerHTML = K.map(function (k, i) {
       return '<div class="kpi' + (k.f ? ' click' : '') + '" data-i="' + i + '" style="--k:' + css(k.c) + '"' + (k.f ? ' title="Bấm để lọc"' : '') + '><div class="lb">' + esc(k.l) + '</div><div class="v num">' + k.v + '</div><div class="s">' + esc(k.s) + '</div></div>';
@@ -1979,25 +2001,27 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
   function renderInsights() {
     var v = S.view, L = [], link = function (d) { return '<a data-open="' + d.id + '">#' + d.id + ' ' + esc(d.name.length > 60 ? d.name.slice(0, 58) + '…' : d.name) + '</a>'; };
     if (!v.length) { $('#insights').innerHTML = '<li>Không có thương vụ nào khớp bộ lọc.</li>'; return; }
-    var act = v.filter(function (d) { return d.status === 'Active'; }), actV = sum(act, function (d) { return d.value; });
+    var act = v.filter(function (d) { return d.status === 'Active'; }), actV = sum(act, val);
     var rem = v.filter(function (d) { return d.remind; }).sort(function (a, b) { return b.staleDays - a.staleDays; });
     if (rem.length) L.push('<span class="hot">' + fmtN(rem.length) + '</span> thương vụ hơn 1 tháng chưa cập nhật; lâu nhất ' + link(rem[0]) + ' — <b>' + fmtN(rem[0].staleDays) + ' ngày</b> (' + esc(rem[0].sale) + ').');
-    var ts = topBy(act, function (d) { return d.sale; }, function (d) { return d.value; });
+    var ts = topBy(act, function (d) { return d.sale; }, val);
     if (ts.length && actV) L.push('Sale dẫn đầu pipeline Active: <b>' + esc(ts[0][0]) + '</b> với ' + fmtShort(ts[0][1][1]) + ' (' + fmtN(ts[0][1][0]) + ' thương vụ, ' + pct(ts[0][1][1], actV) + ' pipeline).');
-    var tv = topBy(v, function (d) { return d.mainVendor === NO_VENDOR ? null : d.mainVendor; }, function (d) { return d.value; });
+    var vm = new Map(), sel = vendorSel();
+    v.forEach(function (d) { d.vendorNames.forEach(function (n) { if (n === NO_VENDOR || (sel && !sel.has(n))) return; var e = vm.get(n) || [0, 0]; e[0]++; e[1] += d.vendorValue.get(n) || 0; vm.set(n, e); }); });
+    var tv = Array.from(vm.entries()).sort(function (a, b) { return b[1][1] - a[1][1]; });
     if (tv.length) {
       var byCnt = tv.slice().sort(function (a, b) { return b[1][0] - a[1][0]; })[0];
-      L.push('Hãng chính có giá trị lớn nhất: <b>' + esc(tv[0][0]) + '</b> (' + fmtShort(tv[0][1][1]) + '); nhiều thương vụ nhất: <b>' + esc(byCnt[0]) + '</b> (' + fmtN(byCnt[1][0]) + ').');
+      L.push('Hãng có giá trị lớn nhất: <b>' + esc(tv[0][0]) + '</b> (' + fmtShort(tv[0][1][1]) + ', tính theo giá trị BOM của hãng); nhiều thương vụ nhất: <b>' + esc(byCnt[0]) + '</b> (' + fmtN(byCnt[1][0]) + ').');
     }
     var od = act.filter(function (d) { return d.overdue !== null; }).sort(function (a, b) { return b.overdue - a.overdue; });
-    if (od.length) L.push('<span class="hot">' + fmtN(od.length) + '</span> thương vụ Active đã qua timeline (tổng ' + fmtShort(sum(od, function (d) { return d.value; })) + '); quá hạn lâu nhất ' + link(od[0]) + ' — ' + fmtN(od[0].overdue) + ' ngày.');
+    if (od.length) L.push('<span class="hot">' + fmtN(od.length) + '</span> thương vụ Active đã qua timeline (tổng ' + fmtShort(sum(od, val)) + '); quá hạn lâu nhất ' + link(od[0]) + ' — ' + fmtN(od[0].overdue) + ' ngày.');
     var soon = act.filter(function (d) { return d.timeline === TIMELINES[1]; });
-    if (soon.length) L.push('<b>' + fmtN(soon.length) + '</b> thương vụ có Close date trong 30 ngày tới, giá trị ' + fmtShort(sum(soon, function (d) { return d.value; })) + ' — cần ưu tiên chốt.');
-    var big = act.filter(function (d) { return d.value > 0; }).sort(function (a, b) { return b.value - a.value; })[0];
-    if (big) L.push('Thương vụ Active lớn nhất: ' + link(big) + ' — <b>' + fmtShort(big.value) + '</b> (' + esc(big.sale) + ', ' + esc(big.stage) + ').');
-    var tc = topBy(v, function (d) { return d.customer; }, function (d) { return d.value; }), totV = sum(v, function (d) { return d.value; });
+    if (soon.length) L.push('<b>' + fmtN(soon.length) + '</b> thương vụ có Close date trong 30 ngày tới, giá trị ' + fmtShort(sum(soon, val)) + ' — cần ưu tiên chốt.');
+    var big = act.filter(function (d) { return val(d) > 0; }).sort(function (a, b) { return val(b) - val(a); })[0];
+    if (big) L.push('Thương vụ Active lớn nhất' + (sel ? ' (theo phần giá trị của hãng đang lọc)' : '') + ': ' + link(big) + ' — <b>' + fmtShort(val(big)) + '</b> (' + esc(big.sale) + ', ' + esc(big.stage) + ').');
+    var tc = topBy(v, function (d) { return d.customer; }, val), totV = sum(v, val);
     if (tc.length >= 5 && totV) L.push('Top 5 khách hàng chiếm <b>' + pct(tc.slice(0, 5).reduce(function (s, x) { return s + x[1][1]; }, 0), totV) + '</b> tổng giá trị; lớn nhất <b>' + esc(tc[0][0]) + '</b> (' + fmtShort(tc[0][1][1]) + ').');
-    var seg = topBy(v, function (d) { return d.segment; }, function (d) { return d.value; });
+    var seg = topBy(v, function (d) { return d.segment; }, val);
     if (seg.length && totV) L.push('Nhóm KH đóng góp giá trị lớn nhất: <b>' + esc(seg[0][0]) + '</b> (' + pct(seg[0][1][1], totV) + ', ' + fmtN(seg[0][1][0]) + ' thương vụ).');
     var rs = topBy(v, function (d) { return d.reseller || null; }, function () { return 1; });
     var noRs = v.filter(function (d) { return !d.reseller; }).length;
@@ -2019,7 +2043,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
   var CHARTS = [
     { id: 'sale', title: 'Theo Sale (chủ sở hữu thương vụ)', sub: 'chia theo trạng thái · bấm cột để lọc', kind: 'stack', dim: 'sale', w: 'w8', tall: true },
     { id: 'stage', title: 'Pipeline theo giai đoạn', sub: 'bấm thanh để lọc', kind: 'hbar', dim: 'stage', order: STAGES, color: 'ramp', w: 'w4', tall: true },
-    { id: 'vendor', title: 'Theo Hãng', sub: 'top 15 · chế độ giá trị dùng Giá trị BOM theo hãng', kind: 'hbar', dim: 'vendor', top: 15, tall: true },
+    { id: 'vendor', title: 'Theo Hãng', sub: 'top 15 · giá trị = Giá trị BOM theo hãng (thương vụ 1 hãng: cả giá trị)', kind: 'hbar', dim: 'vendor', top: 15, tall: true },
     { id: 'reseller', title: 'Theo Reseller', sub: 'top 15 · bấm thanh để lọc', kind: 'hbar', dim: 'reseller', top: 15, tall: true },
     { id: 'segment', title: 'Theo phân nhóm khách hàng', sub: 'bấm thanh để lọc', kind: 'hbar', dim: 'segment', tall: true },
     { id: 'bucket', title: 'Theo mức giá trị thương vụ', sub: 'bấm cột để lọc', kind: 'vbar', dim: 'bucket', order: BUCKETS, color: 'ramp' },
@@ -2063,13 +2087,8 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
   }
   function metricVal(d, key, dim) {
     if (S.metric === 'count') return 1;
-    if (dim === 'vendor') {
-      var m = d.vendors.filter(function (x) { return (x.v || NO_VENDOR) === key; });
-      var b = m.reduce(function (s, x) { return s + (x.bom || 0); }, 0);
-      if (b) return b;
-      return key === d.mainVendor ? (d.value || 0) : 0;
-    }
-    return d.value || 0;
+    if (dim === 'vendor') return d.vendorValue.get(key) || 0;
+    return val(d) || 0;
   }
   function aggregate(c, list) {
     var f = FBY[c.dim], m = new Map();
@@ -2208,6 +2227,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
     { k: 'stage', l: 'Giai đoạn', v: function (d) { return d.stage; }, cls: 'clip', def: true, sortV: function (d) { return STAGES.indexOf(d.stage); } },
     { k: 'status', l: 'Trạng thái', v: function (d) { return d.status; }, html: function (d) { return badgeStatus(d.status); }, def: true },
     { k: 'value', l: 'Giá trị (VND)', v: function (d) { return d.value; }, fmt: fmtVND, num: true, r: true, def: true },
+    { k: 'vval', l: 'Giá trị hãng đang lọc (VND)', v: function (d) { return vendorSel() ? val(d) : null; }, fmt: fmtVND, num: true, r: true, auto: true },
     { k: 'bucket', l: 'Mức giá trị', v: function (d) { return d.bucket; }, sortV: function (d) { return BUCKETS.indexOf(d.bucket); } },
     { k: 'vendors', l: 'Hãng', v: function (d) { return d.vendorNames.join(', '); }, html: function (d) { return d.vendorNames.map(function (x, i) { return '<span class="vend' + (i === 0 ? ' main' : '') + '">' + esc(x) + '</span>'; }).join(''); }, def: true },
     { k: 'contract', l: 'Loại HĐ', v: function (d) { return d.contract || ''; } },
@@ -2236,7 +2256,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
     });
   }
   function renderTable() {
-    var cols = COLS.filter(function (c) { return S.cols.indexOf(c.k) >= 0; });
+    var cols = COLS.filter(function (c) { return c.auto ? !!vendorSel() : S.cols.indexOf(c.k) >= 0; });
     var rows = sortedView(), ps = S.pageSize === 'all' ? rows.length || 1 : S.pageSize, pages = Math.max(1, Math.ceil(rows.length / ps));
     if (S.page > pages) S.page = pages;
     var page = rows.slice((S.page - 1) * ps, S.page * ps);
@@ -2277,7 +2297,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
     var pop = document.createElement('div'); pop.className = 'pop right colpop';
     var draw = function () {
       pop.innerHTML = '<div class="pop-h"><b>Ẩn / hiện cột</b><div class="row"><button data-act="all">Hiện tất cả</button><button data-act="def">Mặc định</button></div></div><div class="pop-b">' +
-        COLS.map(function (c) { return '<label class="opt"><input type="checkbox" value="' + c.k + '"' + (S.cols.indexOf(c.k) >= 0 ? ' checked' : '') + (c.k === 'id' ? ' disabled' : '') + '><span class="l">' + esc(c.l) + '</span></label>'; }).join('') + '</div>';
+        COLS.filter(function (c) { return !c.auto; }).map(function (c) { return '<label class="opt"><input type="checkbox" value="' + c.k + '"' + (S.cols.indexOf(c.k) >= 0 ? ' checked' : '') + (c.k === 'id' ? ' disabled' : '') + '><span class="l">' + esc(c.l) + '</span></label>'; }).join('') + '</div>';
     };
     draw(); fb.appendChild(pop); openPop = pop;
     pop.addEventListener('click', function (ev) {
@@ -2289,10 +2309,10 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
   });
   $('#btnDensity').addEventListener('click', function () { S.dense = !S.dense; store('dense', S.dense); renderTable(); });
   $('#btnCsv').addEventListener('click', function () {
-    var cols = COLS.filter(function (c) { return S.cols.indexOf(c.k) >= 0; });
+    var cols = COLS.filter(function (c) { return c.auto ? !!vendorSel() : S.cols.indexOf(c.k) >= 0; });
     var q = function (s) { s = s === null || s === undefined ? '' : String(s); return /[",\n;]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
     var lines = [cols.map(function (c) { return q(c.l); }).join(',')].concat(sortedView().map(function (d) {
-      return cols.map(function (c) { var v = c.v(d); return q(c.fmt && c.k !== 'value' ? c.fmt(v) : v); }).join(',');
+      return cols.map(function (c) { var v = c.v(d); return q(c.fmt && c.k !== 'value' && c.k !== 'vval' ? c.fmt(v) : v); }).join(',');
     }));
     download(new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' }), 'Danh sach thuong vu ' + fmtD(S.ref).replace(/\//g, '.') + '.csv');
   });
@@ -2312,8 +2332,9 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
     var dr = document.createElement('aside'); dr.className = 'drawer';
     dr.innerHTML = '<div class="drawer-h"><button class="btn glass icon sm x" title="Đóng (Esc)"><svg class="i"><use href="#i-x"/></svg></button><div class="idl">THƯƠNG VỤ #' + d.id + '</div><h3>' + esc(d.name) + '</h3><div>' + badgeStatus(d.status) + ' ' + badgeFlag(d) + '</div></div>' +
       '<div class="drawer-b"><dl class="kv">' + kv.map(function (x) { return '<dt>' + x[0] + '</dt><dd>' + x[1] + '</dd>'; }).join('') + '</dl>' +
-      '<div class="dsec"><h5>Hãng trong thương vụ</h5><table class="mini"><thead><tr><th>Hãng</th><th>Nguồn hãng</th><th style="text-align:right">Giá trị BOM</th></tr></thead><tbody>' +
-      d.vendors.map(function (x, i) { return '<tr><td>' + (i === 0 ? '<b>' + esc(x.v || NO_VENDOR) + '</b> <span class="muted">(chính)</span>' : esc(x.v || NO_VENDOR)) + '</td><td>' + esc(x.src || '') + '</td><td style="text-align:right" class="num">' + (x.bom !== null && x.bom !== undefined ? fmtVND(x.bom) : '–') + '</td></tr>'; }).join('') + '</tbody></table></div>' +
+      '<div class="dsec"><h5>Hãng trong thương vụ</h5><table class="mini"><thead><tr><th>Hãng</th><th>Nguồn hãng</th><th style="text-align:right">Giá trị BOM</th><th style="text-align:right" title="Giá trị được cộng cho hãng khi lọc / tổng hợp theo hãng">Tính cho hãng</th></tr></thead><tbody>' +
+      d.vendors.map(function (x, i) { var k = x.v || NO_VENDOR, first = d.vendors.findIndex(function (y) { return (y.v || NO_VENDOR) === k; }) === i; return '<tr><td>' + (i === 0 ? '<b>' + esc(k) + '</b> <span class="muted">(chính)</span>' : esc(k)) + '</td><td>' + esc(x.src || '') + '</td><td style="text-align:right" class="num">' + (x.bom !== null && x.bom !== undefined ? fmtVND(x.bom) : '–') + '</td><td style="text-align:right" class="num">' + (first ? fmtVND(d.vendorValue.get(k)) : '') + '</td></tr>'; }).join('') + '</tbody></table>' +
+      (d.vendorNames.length > 1 ? '<p class="muted" style="font-size:12px;margin:6px 0 0">Thương vụ nhiều hãng: khi lọc / tổng hợp theo hãng, mỗi hãng được tính theo Giá trị BOM của hãng' + (d.vendors.some(function (x) { return x.bom; }) ? '' : ' – BOM chưa có giá nên toàn bộ giá trị tính cho hãng chính') + '.</p>' : '') + '</div>' +
       (d.issues.length ? '<div class="dsec"><h5>Vấn đề cần kiểm tra</h5><ul class="flags">' + d.issues.map(function (x) { return '<li class="issue">' + esc(x) + '</li>'; }).join('') + '</ul></div>' : '') +
       (d.done.length ? '<div class="dsec"><h5>Đã xử lý khi convert</h5><ul class="flags">' + d.done.map(function (x) { return '<li class="done">' + esc(x) + '</li>'; }).join('') + '</ul></div>' : '') + '</div>';
     document.body.appendChild(sc); document.body.appendChild(dr);
@@ -2442,13 +2463,15 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
     ws['!rows'] = []; ws['!rows'][r0] = { hpt: 30 };
     return finish(ws, r0 + rows.length + 1, header.length, spec.map(function (s) { return s.w || 14; }), { freeze: [spec._freezeCols || 0, r0 + 1], filter: C.colLetter(0) + (r0 + 1) + ':' + last });
   }
-  function pivot(list, keyFn, order) {
+  function pivot(list, keyFn, order, valFn) {
     var m = new Map();
+    valFn = valFn || function (d) { return val(d) || 0; };
     list.forEach(function (d) {
       keyFn(d).forEach(function (k) {
         var e = m.get(k); if (!e) { e = { n: 0, a: 0, w: 0, l: 0, v: 0, va: 0, vw: 0, rem: 0, od: 0, big: 0 }; m.set(k, e); }
-        e.n++; e.v += d.value || 0;
-        if (d.status === 'Active') { e.a++; e.va += d.value || 0; } else if (d.status === 'Won') { e.w++; e.vw += d.value || 0; } else if (d.status === 'Lost') e.l++;
+        var x = valFn(d, k) || 0;
+        e.n++; e.v += x;
+        if (d.status === 'Active') { e.a++; e.va += x; } else if (d.status === 'Won') { e.w++; e.vw += x; } else if (d.status === 'Lost') e.l++;
         if (d.remind) e.rem++; if (d.overdue !== null) e.od++; if (d.value >= 5e9) e.big++;
       });
     });
@@ -2465,12 +2488,17 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
     });
   }
   var PIV_SPEC = [{ w: 34 }, { w: 11, z: '#,##0' }, { w: 9, z: '#,##0' }, { w: 9, z: '#,##0' }, { w: 9, z: '#,##0' }, { w: 20, z: '#,##0' }, { w: 20, z: '#,##0' }, { w: 20, z: '#,##0' }, { w: 11, z: '0.0%' }, { w: 11, z: '0.0%' }, { w: 12, z: '#,##0' }, { w: 12, z: '#,##0' }, { w: 10, z: '#,##0' }];
-  function pivotSheet(name, ent, list, sub) {
-    var total = sum(list, function (d) { return d.value; });
+  function pivotSheet(name, ent, list, sub, vendorTotal) {
+    var total = sum(list, val);
     var rows = pivotRows(ent, total);
+    if (vendorTotal) {   // sheet Theo Hãng: tổng = cộng giá trị của các hãng (không phải tổng giá trị thương vụ)
+      total = ent.reduce(function (s, e) { return s + e[1].v; }, 0);
+      rows = pivotRows(ent, total);
+    }
     var t = ['TỔNG CỘNG', list.length, list.filter(function (d) { return d.status === 'Active'; }).length, list.filter(function (d) { return d.status === 'Won'; }).length, list.filter(function (d) { return d.status === 'Lost'; }).length, total,
-      sum(list.filter(function (d) { return d.status === 'Active'; }), function (d) { return d.value; }), sum(list.filter(function (d) { return d.status === 'Won'; }), function (d) { return d.value; }), null, total ? 1 : null,
+      sum(list.filter(function (d) { return d.status === 'Active'; }), val), sum(list.filter(function (d) { return d.status === 'Won'; }), val), null, total ? 1 : null,
       list.filter(function (d) { return d.remind; }).length, list.filter(function (d) { return d.overdue !== null; }).length, list.filter(function (d) { return d.value >= 5e9; }).length];
+    if (vendorTotal) { t[6] = ent.reduce(function (s, e) { return s + e[1].va; }, 0); t[7] = ent.reduce(function (s, e) { return s + e[1].vw; }, 0); }
     t._style = t.map(function () { return ST.total; });
     rows.push(t);
     return tableSheet([name].concat(PIV_H), rows, PIV_SPEC, 'Tổng hợp theo ' + name.toLowerCase(), sub);
@@ -2496,8 +2524,8 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
     r++;
     var act = v.filter(function (d) { return d.status === 'Active'; }), won = v.filter(function (d) { return d.status === 'Won'; }), lost = v.filter(function (d) { return d.status === 'Lost'; });
     put(ws, r++, 0, 'CHỈ SỐ CHÍNH', ST.h2); put(ws, r - 1, 1, '', ST.h2); put(ws, r - 1, 2, '', ST.h2);
-    [['Tổng thương vụ', v.length, '#,##0'], ['Tổng giá trị (VND)', sum(v, function (d) { return d.value; }), '#,##0'], ['Pipeline Active (VND)', sum(act, function (d) { return d.value; }), '#,##0'], ['Số thương vụ Active', act.length, '#,##0'],
-      ['Giá trị Won (VND)', sum(won, function (d) { return d.value; }), '#,##0'], ['Số thương vụ Won', won.length, '#,##0'], ['Số thương vụ Lost', lost.length, '#,##0'],
+    [['Tổng thương vụ', v.length, '#,##0'], ['Tổng giá trị (VND)', sum(v, val), '#,##0'], ['Pipeline Active (VND)', sum(act, val), '#,##0'], ['Số thương vụ Active', act.length, '#,##0'],
+      ['Giá trị Won (VND)', sum(won, val), '#,##0'], ['Số thương vụ Won', won.length, '#,##0'], ['Số thương vụ Lost', lost.length, '#,##0'],
       ['Tỷ lệ thắng (Won/(Won+Lost))', won.length + lost.length ? won.length / (won.length + lost.length) : null, '0.0%'], ['Cần nhắc cập nhật (≥ Mức 1)', v.filter(function (d) { return d.remind; }).length, '#,##0'],
       ['Active đã qua timeline', act.filter(function (d) { return d.overdue !== null; }).length, '#,##0'], ['Close date trong 30 ngày tới', act.filter(function (d) { return d.timeline === TIMELINES[1]; }).length, '#,##0'],
       ['Thương vụ có cờ dữ liệu cần kiểm tra', v.filter(function (d) { return d.issues.length && d.type !== 'Lead chiến dịch'; }).length, '#,##0']].forEach(function (x) {
@@ -2506,13 +2534,13 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
     var block = function (title, ent, h) {
       r++; put(ws, r, 0, title, ST.h2); for (var j = 1; j < 5; j++) put(ws, r, j, '', ST.h2); r++;
       [h, 'Số thương vụ', 'Tỷ trọng SL', 'Giá trị (VND)', 'Tỷ trọng GT'].forEach(function (x, j) { put(ws, r, j, x, ST.hdr); }); r++;
-      var tn = v.length, tv = sum(v, function (d) { return d.value; });
+      var tn = v.length, tv = sum(v, val);
       ent.forEach(function (e, i) {
         var st = e.st || ST.cell;
         put(ws, r, 0, e[0], st); put(ws, r, 1, e[1], st, '#,##0'); put(ws, r, 2, tn ? e[1] / tn : null, st, '0.0%'); put(ws, r, 3, e[2], st, '#,##0'); put(ws, r, 4, tv ? e[2] / tv : null, st, '0.0%'); r++;
       });
     };
-    var grp = function (order, fn) { return order.map(function (k) { var l = v.filter(function (d) { return fn(d) === k; }); return [k, l.length, sum(l, function (d) { return d.value; })]; }); };
+    var grp = function (order, fn) { return order.map(function (k) { var l = v.filter(function (d) { return fn(d) === k; }); return [k, l.length, sum(l, val)]; }); };
     block('THEO TRẠNG THÁI', grp(STATUSES, function (d) { return d.status; }), 'Trạng thái');
     block('THEO GIAI ĐOẠN', grp(STAGES, function (d) { return d.stage; }), 'Giai đoạn');
     block('THEO MỨC GIÁ TRỊ', grp(BUCKETS, function (d) { return d.bucket; }), 'Mức giá trị');
@@ -2527,28 +2555,31 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
     X.utils.book_append_sheet(wb, ws, 'Tổng quan');
 
     // ---- Danh sách thương vụ (1 dòng / thương vụ)
-    var H = ['ID', 'Tên thương vụ', 'Loại deal', 'Tên khách hàng', 'Phân nhóm khách hàng', 'Sale', 'Reseller', 'Giai đoạn', 'Trạng thái', 'Giá trị thương vụ', 'Mức giá trị', 'Hãng chính', 'Các hãng', 'Số hãng',
+    var H = ['ID', 'Tên thương vụ', 'Loại deal', 'Tên khách hàng', 'Phân nhóm khách hàng', 'Sale', 'Reseller', 'Giai đoạn', 'Trạng thái', 'Giá trị thương vụ', 'Giá trị hãng đang lọc', 'Mức giá trị', 'Hãng chính', 'Các hãng', 'Số hãng',
       'Phân loại HĐ', 'Phân loại deal size', 'Close date', 'Tháng/Quý Close date', 'Tình trạng timeline', 'Số ngày quá hạn forecast', 'Ngày tạo', 'Tuổi thương vụ (ngày)', 'Cập nhật lần cuối', 'Số ngày chưa cập nhật', 'Cờ nhắc cập nhật',
       'Số vấn đề dữ liệu', 'Vấn đề cần kiểm tra', 'Lý do Failed', C.BOM_TXT];
-    var NEW = ['Mức giá trị', 'Hãng chính', 'Các hãng', 'Số hãng', 'Tháng/Quý Close date', 'Tình trạng timeline', 'Tuổi thương vụ (ngày)', 'Số ngày chưa cập nhật', 'Cờ nhắc cập nhật', 'Số vấn đề dữ liệu', 'Vấn đề cần kiểm tra'];
-    var W = { 'ID': 10, 'Tên thương vụ': 44, 'Tên khách hàng': 36, 'Phân nhóm khách hàng': 26, 'Sale': 20, 'Reseller': 16, 'Giai đoạn': 20, 'Trạng thái': 10, 'Giá trị thương vụ': 18, 'Các hãng': 24, 'Close date': 12, 'Ngày tạo': 16, 'Cập nhật lần cuối': 16, 'Cờ nhắc cập nhật': 22, 'Vấn đề cần kiểm tra': 70, 'Lý do Failed': 36, 'Tình trạng timeline': 20, 'Tháng/Quý Close date': 14 };
+    var NEW = ['Giá trị hãng đang lọc', 'Mức giá trị', 'Hãng chính', 'Các hãng', 'Số hãng', 'Tháng/Quý Close date', 'Tình trạng timeline', 'Tuổi thương vụ (ngày)', 'Số ngày chưa cập nhật', 'Cờ nhắc cập nhật', 'Số vấn đề dữ liệu', 'Vấn đề cần kiểm tra'];
+    var W = { 'ID': 10, 'Tên thương vụ': 44, 'Tên khách hàng': 36, 'Phân nhóm khách hàng': 26, 'Sale': 20, 'Reseller': 16, 'Giai đoạn': 20, 'Trạng thái': 10, 'Giá trị thương vụ': 18, 'Giá trị hãng đang lọc': 18, 'Các hãng': 24, 'Close date': 12, 'Ngày tạo': 16, 'Cập nhật lần cuối': 16, 'Cờ nhắc cập nhật': 22, 'Vấn đề cần kiểm tra': 70, 'Lý do Failed': 36, 'Tình trạng timeline': 20, 'Tháng/Quý Close date': 14 };
     W[C.BOM_TXT] = 50;
-    var Z = { 'ID': '0', 'Giá trị thương vụ': '#,##0', 'Close date': 'dd/mm/yyyy', 'Ngày tạo': 'dd/mm/yyyy hh:mm', 'Cập nhật lần cuối': 'dd/mm/yyyy hh:mm' };
+    var Z = { 'ID': '0', 'Giá trị thương vụ': '#,##0', 'Giá trị hãng đang lọc': '#,##0', 'Close date': 'dd/mm/yyyy', 'Ngày tạo': 'dd/mm/yyyy hh:mm', 'Cập nhật lần cuối': 'dd/mm/yyyy hh:mm' };
     var spec = H.map(function (h) { return { w: W[h] || 13, z: Z[h], isNew: NEW.indexOf(h) >= 0, date: ['Close date', 'Ngày tạo', 'Cập nhật lần cuối'].indexOf(h) >= 0, wrap: ['Tên thương vụ', 'Vấn đề cần kiểm tra', C.BOM_TXT, 'Lý do Failed'].indexOf(h) >= 0 }; });
     spec._freezeCols = 2;
     var rows = v.map(function (d) {
       var cq = d.close ? (function () { var x = new Date(d.close); return 'T' + (x.getUTCMonth() + 1) + '/' + x.getUTCFullYear() + ' · Q' + (Math.floor(x.getUTCMonth() / 3) + 1); })() : null;
-      var row = [d.id, d.name, d.type, d.customer, d.segment, d.sale, d.reseller, d.stage, d.status, d.value, d.bucket, d.mainVendor, d.vendorNames.join(', '), d.vendorNames.length,
+      var row = [d.id, d.name, d.type, d.customer, d.segment, d.sale, d.reseller, d.stage, d.status, d.value, vendorSel() ? val(d) : null, d.bucket, d.mainVendor, d.vendorNames.join(', '), d.vendorNames.length,
         d.contract, d.dealSize, d.close, cq, d.timeline, d.overdue, d.created, d.ageDays, d.updated, d.staleDays, d.flag, d.issues.length, d.issues.join('; ') || null, d.failed, d.bomText];
       var li = FLAGS.indexOf(d.flag);
-      if (li >= 1 && li <= 4) { row._style = []; row._style[24] = { font: { name: XF, sz: 10, bold: true }, border: BD, fill: { patternType: 'solid', fgColor: { rgb: lvlFill[li] } } }; }
+      if (li >= 1 && li <= 4) { row._style = []; row._style[25] = { font: { name: XF, sz: 10, bold: true }, border: BD, fill: { patternType: 'solid', fgColor: { rgb: lvlFill[li] } } }; }
       return row;
     });
     X.utils.book_append_sheet(wb, tableSheet(H, rows, spec, 'Danh sách thương vụ (1 dòng / thương vụ)', sub), 'Danh sách thương vụ');
 
     // ---- Pivot sheets
     X.utils.book_append_sheet(wb, pivotSheet('Sale', pivot(v, function (d) { return [d.sale]; }), v, sub), 'Theo Sale');
-    X.utils.book_append_sheet(wb, pivotSheet('Hãng', pivot(v, function (d) { return d.vendorNames; }), v, sub + ' · Một thương vụ nhiều hãng được tính cho từng hãng; giá trị = giá trị thương vụ.'), 'Theo Hãng');
+    var vsel = vendorSel();
+    var hEnt = pivot(v, function (d) { return d.vendorNames.filter(function (n) { return !vsel || vsel.has(n); }); }, null, function (d, k) { return d.vendorValue.get(k) || 0; });
+    var hSheet = pivotSheet('Hãng', hEnt, v, sub + ' · Thương vụ nhiều hãng được đếm cho từng hãng; giá trị = Giá trị BOM theo hãng (thương vụ 1 hãng: cả giá trị thương vụ; nhiều hãng mà BOM không có giá: tính cho hãng chính).', true);
+    X.utils.book_append_sheet(wb, hSheet, 'Theo Hãng');
     X.utils.book_append_sheet(wb, pivotSheet('Reseller', pivot(v, function (d) { return [d.reseller || NO_RESELLER]; }), v, sub), 'Theo Reseller');
     X.utils.book_append_sheet(wb, pivotSheet('Nhóm khách hàng', pivot(v, function (d) { return [d.segment]; }, C.SEGMENTS), v, sub), 'Theo Nhóm KH');
     X.utils.book_append_sheet(wb, pivotSheet('Khách hàng', pivot(v, function (d) { return [d.customer]; }), v, sub), 'Theo Khách hàng');
@@ -2566,15 +2597,15 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
 
     // ---- Chi tiết theo hãng (dòng template, có cột bổ sung)
     var ids = new Set(v.map(function (d) { return d.id; })), byId = new Map(v.map(function (d) { return [d.id, d]; }));
-    var TC = C.TEMPLATE_COLS.concat(['Mức giá trị', 'Số ngày chưa cập nhật', 'Cờ nhắc cập nhật', 'Tình trạng timeline']);
-    var TZ = { 'ID': '0', 'Giá trị thương vụ': '#,##0', 'Giá trị BOM theo hãng': '#,##0', 'Close date': 'dd/mm/yyyy', 'Ngày tạo': 'dd/mm/yyyy hh:mm', 'Cập nhật lần cuối': 'dd/mm/yyyy hh:mm', 'Số ngày quá hạn forecast': '0' };
-    var TW = { 'ID': 10, 'Tên thương vụ': 42, 'Tên khách hàng': 36, 'Phân nhóm khách hàng': 26, 'Sale': 20, 'Giai đoạn': 20, 'Giá trị thương vụ': 18, 'Nguồn hãng': 20, 'Giá trị BOM theo hãng': 18, 'Lý do Failed': 36, 'Ngày tạo': 16, 'Cập nhật lần cuối': 16, 'Cờ chất lượng': 80, 'Cờ nhắc cập nhật': 22, 'Tình trạng timeline': 20 };
+    var TC = C.TEMPLATE_COLS.concat(['Giá trị tính cho hãng', 'Mức giá trị', 'Số ngày chưa cập nhật', 'Cờ nhắc cập nhật', 'Tình trạng timeline']);
+    var TZ = { 'Giá trị tính cho hãng': '#,##0', 'ID': '0', 'Giá trị thương vụ': '#,##0', 'Giá trị BOM theo hãng': '#,##0', 'Close date': 'dd/mm/yyyy', 'Ngày tạo': 'dd/mm/yyyy hh:mm', 'Cập nhật lần cuối': 'dd/mm/yyyy hh:mm', 'Số ngày quá hạn forecast': '0' };
+    var TW = { 'Giá trị tính cho hãng': 18, 'ID': 10, 'Tên thương vụ': 42, 'Tên khách hàng': 36, 'Phân nhóm khách hàng': 26, 'Sale': 20, 'Giai đoạn': 20, 'Giá trị thương vụ': 18, 'Nguồn hãng': 20, 'Giá trị BOM theo hãng': 18, 'Lý do Failed': 36, 'Ngày tạo': 16, 'Cập nhật lần cuối': 16, 'Cờ chất lượng': 80, 'Cờ nhắc cập nhật': 22, 'Tình trạng timeline': 20 };
     TW[C.BOM_TXT] = 50;
     var tspec = TC.map(function (h, j) { return { w: TW[h] || 14, z: TZ[h], isNew: j >= C.TEMPLATE_COLS.length, date: C.DATE_COLS.indexOf(h) >= 0 }; }); tspec._freezeCols = 2;
     var trows = [];
     S.res.rows.forEach(function (r0, i) {
       if (!ids.has(r0.ID)) return; var d = byId.get(r0.ID);
-      var row = C.TEMPLATE_COLS.map(function (h) { return r0[h]; }).concat([d.bucket, d.staleDays, d.flag, d.timeline]);
+      var row = C.TEMPLATE_COLS.map(function (h) { return r0[h]; }).concat([d.vendorValue.get(r0['Hãng'] || NO_VENDOR) || 0, d.bucket, d.staleDays, d.flag, d.timeline]);
       if (S.res.splitFlags[i]) row._grey = true;
       trows.push(row);
     });
@@ -2589,7 +2620,8 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
       ['Danh sách thương vụ', 'Mỗi thương vụ 1 dòng (gộp các dòng tách hãng). Cột tiêu đề màu cam là cột bổ sung để phân tích.'],
       ['Theo Sale / Hãng / Reseller / Nhóm KH / Khách hàng', 'Bảng tổng hợp: số thương vụ, Active/Won/Lost, tổng giá trị, pipeline Active, giá trị Won, tỷ lệ thắng, tỷ trọng giá trị, số cần nhắc, số đã qua timeline, số deal ≥ 5 tỷ.'],
       ['Nhắc cập nhật', 'Danh sách thương vụ có Cập nhật lần cuối cách ngày chốt hơn 1 tháng, sắp theo sale và số ngày chưa cập nhật.'],
-      ['Chi tiết theo hãng', 'Dữ liệu template chuẩn (giữ nguyên cột của file convert, 1 dòng / hãng) kèm 4 cột bổ sung.'],
+      ['Chi tiết theo hãng', 'Dữ liệu template chuẩn (giữ nguyên cột của file convert, 1 dòng / hãng) kèm 5 cột bổ sung; cột "Giá trị tính cho hãng" cộng dồn được theo hãng.'],
+      ['Giá trị theo hãng', 'Khi lọc / tổng hợp theo hãng, mỗi thương vụ chỉ tính phần giá trị của hãng: thương vụ 1 hãng = cả giá trị thương vụ; thương vụ nhiều hãng = Giá trị BOM theo hãng của hãng đó (hãng không có giá BOM = 0); nhiều hãng mà BOM chưa có giá = cả giá trị tính cho hãng chính. Khi đang lọc hãng, mọi số giá trị ở các sheet (Tổng quan, Theo Sale, …) là phần giá trị của hãng đã chọn; cột "Giá trị thương vụ" vẫn là giá trị cả thương vụ.'],
       ['Mức giá trị', '< 1 tỷ · 1 – 2 tỷ · 2 – 5 tỷ · 5 – 10 tỷ · > 10 tỷ (cận dưới tính vào mức trên, VD đúng 2 tỷ thuộc 2 – 5 tỷ) · Chưa có giá trị.'],
       ['Cờ nhắc cập nhật', 'So Cập nhật lần cuối với ngày chốt: Mức 1 > 1 tháng · Mức 2 > 3 tháng · Mức 3 > 6 tháng · Mức 4 > 1 năm (theo tháng dương lịch). ' + (S.onlyActiveRemind ? 'Chỉ áp dụng cho thương vụ Active; thương vụ Won/Lost ghi "Không áp dụng".' : 'Áp dụng cho mọi trạng thái.')],
       ['Tình trạng timeline', 'Thương vụ Active so Close date với ngày chốt: Đã qua timeline · Trong 30 ngày tới · 31 – 90 ngày tới · Sau 90 ngày · Chưa có timeline. Won/Lost ghi "Đã đóng".'],
